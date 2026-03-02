@@ -1,0 +1,12 @@
+{
+  "name": "prolabs-szachy-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:smoke": "node ./scripts/smoke-test.js"
+  },
+  "dependencies": {
+    "chess.js": "^1.4.0"
+  }
+}
