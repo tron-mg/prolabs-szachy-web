@@ -104,6 +104,8 @@ button:hover {
   padding: 0;
   position: relative;
   aspect-ratio: 1;
+  display: grid;
+  place-items: center;
 }
 
 .square-light {
@@ -114,6 +116,29 @@ button:hover {
   background: var(--dark-square);
 }
 
+.piece {
+  font-size: clamp(1.5rem, 3.5vw, 2.4rem);
+  line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+}
+
+.square.selected {
+  box-shadow: inset 0 0 0 4px #ffd166;
+}
+
+.square.target::after {
+  content: "";
+  width: 22%;
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: rgba(20, 80, 40, 0.45);
+  position: absolute;
+}
+
+.square.last-move {
+  box-shadow: inset 0 0 0 3px rgba(76, 175, 80, 0.65);
+}
+
 .coordinate {
   position: absolute;
   left: 0.3rem;
@@ -122,6 +147,29 @@ button:hover {
   line-height: 1;
   color: rgba(16, 16, 16, 0.6);
   text-transform: lowercase;
+}
+
+.celebration {
+  margin-top: 0.9rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #2e7d32, #1b5e20);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.difficulty-label {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+
+.difficulty-label select {
+  background: #1f252b;
+  color: var(--text-main);
+  border: 1px solid #495360;
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem;
 }
 
 .controls-panel {
