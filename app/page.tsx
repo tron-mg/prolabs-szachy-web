@@ -21,6 +21,13 @@ const pieceSymbols: Record<string, string> = {
   bk: "♚",
 };
 
+type PromotionPiece = "q" | "r" | "b" | "n";
+
+type PendingPromotion = {
+  from: string;
+  to: string;
+};
+
 function squareColor(rank: number, fileIndex: number) {
   return (rank + fileIndex) % 2 === 0 ? "square-light" : "square-dark";
 }
@@ -31,7 +38,12 @@ function toBoardIndex(square: string) {
   return { row: 8 - rank, col: file };
 }
 
-function gameStatusText(state: { isGameOver: boolean; isCheck: boolean; turn: string; result: { type: string; winner: string | null } | null }) {
+function gameStatusText(state: {
+  isGameOver: boolean;
+  isCheck: boolean;
+  turn: string;
+  result: { type: string; winner: string | null } | null;
+}) {
   if (!state.isGameOver) {
     return state.isCheck
       ? `Szach! Ruch: ${state.turn === "w" ? "Białe" : "Czarne"}`
@@ -48,19 +60,14 @@ function gameStatusText(state: { isGameOver: boolean; isCheck: boolean; turn: st
 }
 
 export default function Home() {
-  const {
-    state,
-    makeMove,
-    undoMove,
-    newGame,
-    GAME_MODE,
-    DIFFICULTY,
-    legalMovesForSquare,
-  } = useChessGame();
+  const { state, makeMove, undoMove, newGame, GAME_MODE, DIFFICULTY, legalMovesForSquare } =
+    useChessGame();
 
   const [orientation, setOrientation] = useState<"w" | "b">("w");
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">(DIFFICULTY.MEDIUM);
+  const [humanColor, setHumanColor] = useState<"w" | "b">("w");
+  const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
 
   const boardFiles = orientation === "w" ? files : [...files].reverse();
   const boardRanks = orientation === "w" ? ranks : [...ranks].reverse();
@@ -80,8 +87,16 @@ export default function Home() {
     return pieceSymbols[`${piece.color}${piece.type}`] || null;
   }
 
+  function isPromotionMove(from: string, to: string) {
+    const { row, col } = toBoardIndex(from);
+    const piece = state.board?.[row]?.[col];
+    if (!piece || piece.type !== "p") return false;
+    const targetRank = Number(to[1]);
+    return (piece.color === "w" && targetRank === 8) || (piece.color === "b" && targetRank === 1);
+  }
+
   function handleSquareClick(square: string) {
-    if (state.isGameOver) return;
+    if (state.isGameOver || pendingPromotion) return;
 
     if (!selectedSquare) {
       const moves = legalMovesForSquare(square);
@@ -106,6 +121,11 @@ export default function Home() {
       return;
     }
 
+    if (isPromotionMove(selectedSquare, matchingMove.to)) {
+      setPendingPromotion({ from: selectedSquare, to: matchingMove.to });
+      return;
+    }
+
     makeMove({
       from: selectedSquare,
       to: matchingMove.to,
@@ -115,14 +135,24 @@ export default function Home() {
     setSelectedSquare(null);
   }
 
-  function startLocalGame() {
-    newGame({ mode: GAME_MODE.LOCAL_1V1 });
+  function handlePromotionSelect(piece: PromotionPiece) {
+    if (!pendingPromotion) return;
+    makeMove({ ...pendingPromotion, promotion: piece });
+    setPendingPromotion(null);
     setSelectedSquare(null);
   }
 
-  function startComputerGame() {
-    newGame({ mode: GAME_MODE.VS_COMPUTER, humanColor: "w", difficulty });
+  function startLocalGame() {
+    newGame({ mode: GAME_MODE.LOCAL_1V1 });
     setSelectedSquare(null);
+    setPendingPromotion(null);
+  }
+
+  function startComputerGame() {
+    newGame({ mode: GAME_MODE.VS_COMPUTER, humanColor, difficulty });
+    setOrientation(humanColor);
+    setSelectedSquare(null);
+    setPendingPromotion(null);
   }
 
   return (
@@ -135,7 +165,11 @@ export default function Home() {
       <section className="game-layout">
         <article className="board-panel" aria-label="Chess board panel">
           <div className="board-header">
-            <span>{state.mode === GAME_MODE.VS_COMPUTER ? `AI: ${state.difficulty}` : "Local PvP"}</span>
+            <span>
+              {state.mode === GAME_MODE.VS_COMPUTER
+                ? `AI: ${state.difficulty} · grasz ${state.humanColor === "w" ? "białymi" : "czarnymi"}`
+                : "Local PvP"}
+            </span>
             <span>{gameStatusText(state)}</span>
           </div>
 
@@ -172,6 +206,18 @@ export default function Home() {
             </div>
           </div>
 
+          {pendingPromotion && (
+            <div className="promotion-modal" role="dialog" aria-label="Wybór promocji pionka">
+              <span>Wybierz figurę do promocji:</span>
+              <div className="promotion-row">
+                <button type="button" onClick={() => handlePromotionSelect("q")}>Hetman</button>
+                <button type="button" onClick={() => handlePromotionSelect("r")}>Wieża</button>
+                <button type="button" onClick={() => handlePromotionSelect("b")}>Goniec</button>
+                <button type="button" onClick={() => handlePromotionSelect("n")}>Skoczek</button>
+              </div>
+            </div>
+          )}
+
           {state.isGameOver && (
             <div className="celebration" role="status" aria-live="polite">
               {winner ? (
@@ -194,18 +240,17 @@ export default function Home() {
                 onClick={() =>
                   newGame(
                     state.mode === GAME_MODE.VS_COMPUTER
-                      ? { mode: GAME_MODE.VS_COMPUTER, humanColor: "w", difficulty }
+                      ? { mode: GAME_MODE.VS_COMPUTER, humanColor, difficulty }
                       : { mode: GAME_MODE.LOCAL_1V1 }
                   )
                 }
               >
                 New Game
               </button>
-              <button type="button" onClick={() => undoMove()}>Undo</button>
-              <button
-                type="button"
-                onClick={() => setOrientation((v) => (v === "w" ? "b" : "w"))}
-              >
+              <button type="button" onClick={() => undoMove()}>
+                Undo
+              </button>
+              <button type="button" onClick={() => setOrientation((v) => (v === "w" ? "b" : "w"))}>
                 Flip Board
               </button>
             </div>
@@ -225,8 +270,24 @@ export default function Home() {
                   <option value={DIFFICULTY.HARD}>Hard</option>
                 </select>
               </label>
-              <button type="button" onClick={startComputerGame}>Player vs Computer</button>
-              <button type="button" onClick={startLocalGame}>Local Player vs Player</button>
+
+              <label className="difficulty-label">
+                Kolor gracza (PvC):
+                <select
+                  value={humanColor}
+                  onChange={(e) => setHumanColor(e.target.value as "w" | "b")}
+                >
+                  <option value="w">Białe</option>
+                  <option value="b">Czarne</option>
+                </select>
+              </label>
+
+              <button type="button" onClick={startComputerGame}>
+                Player vs Computer
+              </button>
+              <button type="button" onClick={startLocalGame}>
+                Local Player vs Player
+              </button>
             </div>
           </div>
 
