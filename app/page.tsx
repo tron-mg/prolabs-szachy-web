@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChessGame } from "../src/react/useChessGame";
+import { APP_VERSION } from "../src/config/version";
 
 const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
@@ -22,11 +23,8 @@ const pieceSymbols: Record<string, string> = {
 };
 
 type PromotionPiece = "q" | "r" | "b" | "n";
-
-type PendingPromotion = {
-  from: string;
-  to: string;
-};
+type PendingPromotion = { from: string; to: string };
+type ClockState = { w: number; b: number };
 
 function squareColor(rank: number, fileIndex: number) {
   return (rank + fileIndex) % 2 === 0 ? "square-light" : "square-dark";
@@ -36,6 +34,13 @@ function toBoardIndex(square: string) {
   const file = square.charCodeAt(0) - "a".charCodeAt(0);
   const rank = Number(square[1]);
   return { row: 8 - rank, col: file };
+}
+
+function formatClock(seconds: number) {
+  const safe = Math.max(0, seconds);
+  const mm = String(Math.floor(safe / 60)).padStart(2, "0");
+  const ss = String(safe % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
 }
 
 function gameStatusText(state: {
@@ -51,11 +56,9 @@ function gameStatusText(state: {
   }
 
   if (!state.result) return "Koniec gry";
-
   if (state.result.type === "checkmate") {
     return `🏆 Mat! Wygrywają ${state.result.winner === "w" ? "Białe" : "Czarne"}!`;
   }
-
   return "🤝 Remis";
 }
 
@@ -68,6 +71,12 @@ export default function Home() {
   const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">(DIFFICULTY.MEDIUM);
   const [humanColor, setHumanColor] = useState<"w" | "b">("w");
   const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
+  const [voiceOn, setVoiceOn] = useState(true);
+  const [clock, setClock] = useState<ClockState>({ w: 600, b: 600 });
+  const [timeWinner, setTimeWinner] = useState<"w" | "b" | null>(null);
+
+  const initializedRef = useRef(false);
+  const lastAnnouncedMoveRef = useRef(0);
 
   const boardFiles = orientation === "w" ? files : [...files].reverse();
   const boardRanks = orientation === "w" ? ranks : [...ranks].reverse();
@@ -78,25 +87,112 @@ export default function Home() {
     return new Set(moves.map((m) => m.to));
   }, [legalMovesForSquare, selectedSquare]);
 
+  const captured = useMemo(() => {
+    const byWhite: string[] = [];
+    const byBlack: string[] = [];
+
+    for (const move of state.history) {
+      if (!move.captured) continue;
+      const capturedColor = move.color === "w" ? "b" : "w";
+      const symbol = pieceSymbols[`${capturedColor}${move.captured}`] || move.captured;
+      if (move.color === "w") byWhite.push(symbol);
+      else byBlack.push(symbol);
+    }
+
+    return { byWhite, byBlack };
+  }, [state.history]);
+
   const winner = state.result?.winner;
+  const hardGameOver = state.isGameOver || Boolean(timeWinner);
+
+  const speak = useCallback(
+    (text: string) => {
+      if (!voiceOn || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "pl-PL";
+      utterance.rate = 1;
+      window.speechSynthesis.speak(utterance);
+    },
+    [voiceOn]
+  );
+
+  useEffect(() => {
+    if (hardGameOver) return;
+    const id = window.setInterval(() => {
+      setClock((prev) => {
+        const side = state.turn as "w" | "b";
+        const next = { ...prev, [side]: Math.max(0, prev[side] - 1) };
+
+        if (next[side] === 0) {
+          const winnerByTime = side === "w" ? "b" : "w";
+          setTimeWinner(winnerByTime);
+          speak(`Czas minął. Wygrywają ${winnerByTime === "w" ? "białe" : "czarne"}.`);
+        }
+
+        return next;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(id);
+  }, [state.turn, hardGameOver, speak]);
+
+  useEffect(() => {
+    if (!voiceOn) return;
+
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      lastAnnouncedMoveRef.current = state.history.length;
+      return;
+    }
+
+    if (state.history.length !== lastAnnouncedMoveRef.current) {
+      lastAnnouncedMoveRef.current = state.history.length;
+
+      if (state.isGameOver && state.result?.type === "checkmate") {
+        speak(`Mat. Wygrywają ${state.result.winner === "w" ? "białe" : "czarne"}.`);
+        return;
+      }
+
+      if (state.isGameOver && state.result?.winner === null) {
+        speak("Partia zakończona remisem.");
+        return;
+      }
+
+      if (state.mode === GAME_MODE.VS_COMPUTER) {
+        if (state.turn === humanColor) speak("Twój ruch.");
+        else speak("Ruch komputera.");
+      }
+
+      if (state.isCheck) speak("Szach.");
+    }
+  }, [state.history.length, state.isGameOver, state.result, state.turn, state.mode, state.isCheck, voiceOn, humanColor, GAME_MODE.VS_COMPUTER, speak]);
+
+  function resetTimers() {
+    setClock({ w: 600, b: 600 });
+    setTimeWinner(null);
+  }
 
   function getPieceAt(square: string) {
     const { row, col } = toBoardIndex(square);
     const piece = state.board?.[row]?.[col];
     if (!piece) return null;
-    return pieceSymbols[`${piece.color}${piece.type}`] || null;
+    return {
+      symbol: pieceSymbols[`${piece.color}${piece.type}`] || null,
+      color: piece.color as "w" | "b",
+      type: piece.type,
+    };
   }
 
   function isPromotionMove(from: string, to: string) {
-    const { row, col } = toBoardIndex(from);
-    const piece = state.board?.[row]?.[col];
+    const piece = getPieceAt(from);
     if (!piece || piece.type !== "p") return false;
     const targetRank = Number(to[1]);
     return (piece.color === "w" && targetRank === 8) || (piece.color === "b" && targetRank === 1);
   }
 
   function handleSquareClick(square: string) {
-    if (state.isGameOver || pendingPromotion) return;
+    if (hardGameOver || pendingPromotion) return;
 
     if (!selectedSquare) {
       const moves = legalMovesForSquare(square);
@@ -109,10 +205,7 @@ export default function Home() {
       return;
     }
 
-    const legalMoves = legalMovesForSquare(selectedSquare) as Array<{
-      to: string;
-      promotion?: string;
-    }>;
+    const legalMoves = legalMovesForSquare(selectedSquare) as Array<{ to: string; promotion?: string }>;
     const matchingMove = legalMoves.find((m) => m.to === square);
 
     if (!matchingMove) {
@@ -126,12 +219,7 @@ export default function Home() {
       return;
     }
 
-    makeMove({
-      from: selectedSquare,
-      to: matchingMove.to,
-      promotion: matchingMove.promotion || "q",
-    });
-
+    makeMove({ from: selectedSquare, to: matchingMove.to, promotion: matchingMove.promotion || "q" });
     setSelectedSquare(null);
   }
 
@@ -144,8 +232,10 @@ export default function Home() {
 
   function startLocalGame() {
     newGame({ mode: GAME_MODE.LOCAL_1V1 });
+    setOrientation("w");
     setSelectedSquare(null);
     setPendingPromotion(null);
+    resetTimers();
   }
 
   function startComputerGame() {
@@ -153,13 +243,25 @@ export default function Home() {
     setOrientation(humanColor);
     setSelectedSquare(null);
     setPendingPromotion(null);
+    resetTimers();
+  }
+
+  function startCurrentModeGame() {
+    newGame(
+      state.mode === GAME_MODE.VS_COMPUTER
+        ? { mode: GAME_MODE.VS_COMPUTER, humanColor, difficulty }
+        : { mode: GAME_MODE.LOCAL_1V1 }
+    );
+    setSelectedSquare(null);
+    setPendingPromotion(null);
+    resetTimers();
   }
 
   return (
     <main className="app-shell">
       <section className="top-bar">
-        <h1>Prolabs Chess</h1>
-        <p>Player vs Player / Player vs Computer · 3 poziomy AI</p>
+        <h1>Szachy v{APP_VERSION}</h1>
+        <p>Szachy v{APP_VERSION} · PvP local / PvC AI · zegary + audio</p>
       </section>
 
       <section className="game-layout">
@@ -170,7 +272,16 @@ export default function Home() {
                 ? `AI: ${state.difficulty} · grasz ${state.humanColor === "w" ? "białymi" : "czarnymi"}`
                 : "Local PvP"}
             </span>
-            <span>{gameStatusText(state)}</span>
+            <span>{timeWinner ? `⏱️ Czas! Wygrane ${timeWinner === "w" ? "białe" : "czarne"}` : gameStatusText(state)}</span>
+          </div>
+
+          <div className="clock-row">
+            <div className={`clock-box ${state.turn === "w" && !hardGameOver ? "clock-active" : ""}`}>
+              ♔ Białe: {formatClock(clock.w)}
+            </div>
+            <div className={`clock-box ${state.turn === "b" && !hardGameOver ? "clock-active" : ""}`}>
+              ♚ Czarne: {formatClock(clock.b)}
+            </div>
           </div>
 
           <div className="board-frame" aria-label="Chessboard container">
@@ -182,8 +293,7 @@ export default function Home() {
                   const isSelected = selectedSquare === coordinate;
                   const isTarget = legalTargets.has(coordinate);
                   const isLastMove =
-                    state.lastMove &&
-                    (state.lastMove.from === coordinate || state.lastMove.to === coordinate);
+                    state.lastMove && (state.lastMove.from === coordinate || state.lastMove.to === coordinate);
 
                   return (
                     <button
@@ -195,8 +305,8 @@ export default function Home() {
                       aria-label={`Square ${coordinate}`}
                       onClick={() => handleSquareClick(coordinate)}
                     >
-                      <span className="piece" aria-hidden>
-                        {piece}
+                      <span className={`piece ${piece?.color === "w" ? "piece-white" : "piece-black"}`} aria-hidden>
+                        {piece?.symbol}
                       </span>
                       <span className="coordinate">{coordinate}</span>
                     </button>
@@ -218,12 +328,12 @@ export default function Home() {
             </div>
           )}
 
-          {state.isGameOver && (
+          {(state.isGameOver || timeWinner) && (
             <div className="celebration" role="status" aria-live="polite">
-              {winner ? (
-                <>
-                  🎉🎉 Brawo! <strong>{winner === "w" ? "Białe" : "Czarne"}</strong> wygrywają! 🏆
-                </>
+              {timeWinner ? (
+                <>🎉 Czas minął! Wygrywają <strong>{timeWinner === "w" ? "Białe" : "Czarne"}</strong>! ⏱️🏆</>
+              ) : winner ? (
+                <>🎉🎉 Brawo! <strong>{winner === "w" ? "Białe" : "Czarne"}</strong> wygrywają! 🏆</>
               ) : (
                 <>👏 Dobra partia! Mamy remis.</>
               )}
@@ -235,24 +345,9 @@ export default function Home() {
           <div className="panel-card">
             <h2>Match Controls</h2>
             <div className="button-row">
-              <button
-                type="button"
-                onClick={() =>
-                  newGame(
-                    state.mode === GAME_MODE.VS_COMPUTER
-                      ? { mode: GAME_MODE.VS_COMPUTER, humanColor, difficulty }
-                      : { mode: GAME_MODE.LOCAL_1V1 }
-                  )
-                }
-              >
-                New Game
-              </button>
-              <button type="button" onClick={() => undoMove()}>
-                Undo
-              </button>
-              <button type="button" onClick={() => setOrientation((v) => (v === "w" ? "b" : "w"))}>
-                Flip Board
-              </button>
+              <button type="button" onClick={startCurrentModeGame}>New Game</button>
+              <button type="button" onClick={() => undoMove()}>Undo</button>
+              <button type="button" onClick={() => setOrientation((v) => (v === "w" ? "b" : "w"))}>Flip Board</button>
             </div>
           </div>
 
@@ -261,10 +356,7 @@ export default function Home() {
             <div className="button-column">
               <label className="difficulty-label">
                 AI poziom:
-                <select
-                  value={difficulty}
-                  onChange={(e) => setDifficulty(e.target.value as "easy" | "medium" | "hard")}
-                >
+                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value as "easy" | "medium" | "hard")}>
                   <option value={DIFFICULTY.EASY}>Easy</option>
                   <option value={DIFFICULTY.MEDIUM}>Medium</option>
                   <option value={DIFFICULTY.HARD}>Hard</option>
@@ -273,22 +365,27 @@ export default function Home() {
 
               <label className="difficulty-label">
                 Kolor gracza (PvC):
-                <select
-                  value={humanColor}
-                  onChange={(e) => setHumanColor(e.target.value as "w" | "b")}
-                >
+                <select value={humanColor} onChange={(e) => setHumanColor(e.target.value as "w" | "b")}>
                   <option value="w">Białe</option>
                   <option value="b">Czarne</option>
                 </select>
               </label>
 
-              <button type="button" onClick={startComputerGame}>
-                Player vs Computer
+              <button type="button" className="sound-toggle" onClick={() => setVoiceOn((v) => !v)}>
+                Dźwięki i głos: {voiceOn ? "ON" : "OFF"}
               </button>
-              <button type="button" onClick={startLocalGame}>
-                Local Player vs Player
-              </button>
+
+              <button type="button" onClick={startComputerGame}>Player vs Computer</button>
+              <button type="button" onClick={startLocalGame}>Local Player vs Player</button>
             </div>
+          </div>
+
+          <div className="panel-card status-card">
+            <h2>Zbite figury</h2>
+            <ul>
+              <li>Białe zbiły: <span className="captured-list">{captured.byWhite.join(" ") || "--"}</span></li>
+              <li>Czarne zbiły: <span className="captured-list">{captured.byBlack.join(" ") || "--"}</span></li>
+            </ul>
           </div>
 
           <div className="panel-card status-card">
