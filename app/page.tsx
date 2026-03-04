@@ -7,20 +7,36 @@ import { APP_VERSION } from "../src/config/version";
 const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
 
-const pieceSymbols: Record<string, string> = {
-  wp: "♙",
-  wn: "♘",
-  wb: "♗",
-  wr: "♖",
-  wq: "♕",
-  wk: "♔",
-  bp: "♟",
-  bn: "♞",
-  bb: "♝",
-  br: "♜",
-  bq: "♛",
-  bk: "♚",
-};
+const pieceSets = {
+  classic: {
+    wp: "♙",
+    wn: "♘",
+    wb: "♗",
+    wr: "♖",
+    wq: "♕",
+    wk: "♔",
+    bp: "♟",
+    bn: "♞",
+    bb: "♝",
+    br: "♜",
+    bq: "♛",
+    bk: "♚",
+  },
+  minecraft: {
+    wp: "🐷",
+    wn: "🐺",
+    wb: "🧙",
+    wr: "🧱",
+    wq: "🐉",
+    wk: "🦸",
+    bp: "🧟",
+    bn: "🕷️",
+    bb: "🧨",
+    br: "⛏️",
+    bq: "👹",
+    bk: "💀",
+  },
+} as const;
 
 type PromotionPiece = "q" | "r" | "b" | "n";
 type PendingPromotion = { from: string; to: string };
@@ -73,6 +89,7 @@ export default function Home() {
   const [humanColor, setHumanColor] = useState<"w" | "b">("w");
   const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
   const [voiceOn, setVoiceOn] = useState(true);
+  const [skin, setSkin] = useState<"classic" | "minecraft">("classic");
   const [timeModeOn, setTimeModeOn] = useState(true);
   const [minutesPerSide, setMinutesPerSide] = useState(10);
   const [clock, setClock] = useState<ClockState>({ w: 600, b: 600 });
@@ -85,6 +102,7 @@ export default function Home() {
 
   const boardFiles = orientation === "w" ? files : [...files].reverse();
   const boardRanks = orientation === "w" ? ranks : [...ranks].reverse();
+  const currentPieceSet = pieceSets[skin];
 
   const legalTargets = useMemo(() => {
     if (!selectedSquare) return new Set<string>();
@@ -99,13 +117,13 @@ export default function Home() {
     for (const move of state.history) {
       if (!move.captured) continue;
       const capturedColor = move.color === "w" ? "b" : "w";
-      const symbol = pieceSymbols[`${capturedColor}${move.captured}`] || move.captured;
+      const symbol = currentPieceSet[`${capturedColor}${move.captured}` as keyof typeof currentPieceSet] || move.captured;
       if (move.color === "w") byWhite.push(symbol);
       else byBlack.push(symbol);
     }
 
     return { byWhite, byBlack };
-  }, [state.history]);
+  }, [state.history, currentPieceSet]);
 
   const winner = state.result?.winner;
   const hardGameOver = state.isGameOver || Boolean(timeWinner);
@@ -210,7 +228,7 @@ export default function Home() {
     const piece = state.board?.[row]?.[col];
     if (!piece) return null;
     return {
-      symbol: pieceSymbols[`${piece.color}${piece.type}`] || null,
+      symbol: currentPieceSet[`${piece.color}${piece.type}` as keyof typeof currentPieceSet] || null,
       color: piece.color as "w" | "b",
       type: piece.type,
     };
@@ -290,7 +308,7 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell skin-${skin}`}>
       <section className="top-bar">
         <h1>Szachy v{APP_VERSION}</h1>
         <p>Szachy v{APP_VERSION} · PvP local / PvC AI · zegary + audio</p>
@@ -416,6 +434,14 @@ export default function Home() {
                 <select value={humanColor} onChange={(e) => setHumanColor(e.target.value as "w" | "b")}>
                   <option value="w">Białe</option>
                   <option value="b">Czarne</option>
+                </select>
+              </label>
+
+              <label className="difficulty-label">
+                Skórka:
+                <select value={skin} onChange={(e) => setSkin(e.target.value as "classic" | "minecraft")}>
+                  <option value="classic">Klasyczna</option>
+                  <option value="minecraft">Minecraft</option>
                 </select>
               </label>
 

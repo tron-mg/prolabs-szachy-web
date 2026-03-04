@@ -84,6 +84,13 @@ button:hover { border-color: #e8c881; background: #4c5968; }
 .square-dark { background: var(--dark-square); }
 
 .piece { font-size: clamp(2.5rem, 7.4vw, 5.2rem); line-height: 0.8; user-select: none; transition: transform 200ms ease; }
+
+.skin-minecraft .square-light { background: #8fbc6b; }
+.skin-minecraft .square-dark { background: #5d7e3f; }
+.skin-minecraft .board-frame { background: #3e5a2d; border-color: #3a2a18; }
+.skin-minecraft .piece { font-size: clamp(2.15rem, 6.5vw, 4.5rem); filter: drop-shadow(0 1px 0 rgba(0,0,0,.4)); }
+.skin-minecraft .piece-white,
+.skin-minecraft .piece-black { text-shadow: 0 2px 2px rgba(0, 0, 0, 0.45); }
 .piece-white {
   color: #ffffff;
   opacity: 1;
