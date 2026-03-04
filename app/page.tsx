@@ -25,6 +25,7 @@ const pieceSymbols: Record<string, string> = {
 type PromotionPiece = "q" | "r" | "b" | "n";
 type PendingPromotion = { from: string; to: string };
 type ClockState = { w: number; b: number };
+type AnimatedMove = { from: string; to: string; id: number } | null;
 
 function squareColor(rank: number, fileIndex: number) {
   return (rank + fileIndex) % 2 === 0 ? "square-light" : "square-dark";
@@ -72,11 +73,15 @@ export default function Home() {
   const [humanColor, setHumanColor] = useState<"w" | "b">("w");
   const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
   const [voiceOn, setVoiceOn] = useState(true);
+  const [timeModeOn, setTimeModeOn] = useState(true);
+  const [minutesPerSide, setMinutesPerSide] = useState(10);
   const [clock, setClock] = useState<ClockState>({ w: 600, b: 600 });
   const [timeWinner, setTimeWinner] = useState<"w" | "b" | null>(null);
+  const [animatedMove, setAnimatedMove] = useState<AnimatedMove>(null);
 
   const initializedRef = useRef(false);
   const lastAnnouncedMoveRef = useRef(0);
+  const lastAnimatedMoveRef = useRef(0);
 
   const boardFiles = orientation === "w" ? files : [...files].reverse();
   const boardRanks = orientation === "w" ? ranks : [...ranks].reverse();
@@ -118,7 +123,8 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (hardGameOver) return;
+    if (!timeModeOn || hardGameOver) return;
+
     const id = window.setInterval(() => {
       setClock((prev) => {
         const side = state.turn as "w" | "b";
@@ -135,7 +141,7 @@ export default function Home() {
     }, 1000);
 
     return () => window.clearInterval(id);
-  }, [state.turn, hardGameOver, speak]);
+  }, [state.turn, hardGameOver, speak, timeModeOn]);
 
   useEffect(() => {
     if (!voiceOn) return;
@@ -166,10 +172,36 @@ export default function Home() {
 
       if (state.isCheck) speak("Szach.");
     }
-  }, [state.history.length, state.isGameOver, state.result, state.turn, state.mode, state.isCheck, voiceOn, humanColor, GAME_MODE.VS_COMPUTER, speak]);
+  }, [
+    state.history.length,
+    state.isGameOver,
+    state.result,
+    state.turn,
+    state.mode,
+    state.isCheck,
+    voiceOn,
+    humanColor,
+    GAME_MODE.VS_COMPUTER,
+    speak,
+  ]);
 
-  function resetTimers() {
-    setClock({ w: 600, b: 600 });
+  useEffect(() => {
+    if (state.mode !== GAME_MODE.VS_COMPUTER || !state.lastMove) return;
+
+    if (state.history.length === lastAnimatedMoveRef.current) return;
+    lastAnimatedMoveRef.current = state.history.length;
+
+    if (state.lastMove.color !== humanColor) {
+      const animation = { from: state.lastMove.from, to: state.lastMove.to, id: Date.now() };
+      setAnimatedMove(animation);
+      const t = window.setTimeout(() => setAnimatedMove(null), 900);
+      return () => window.clearTimeout(t);
+    }
+  }, [state.history.length, state.lastMove, state.mode, humanColor, GAME_MODE.VS_COMPUTER]);
+
+  function resetTimers(minutes = minutesPerSide) {
+    const total = minutes * 60;
+    setClock({ w: total, b: total });
     setTimeWinner(null);
   }
 
@@ -272,17 +304,23 @@ export default function Home() {
                 ? `AI: ${state.difficulty} · grasz ${state.humanColor === "w" ? "białymi" : "czarnymi"}`
                 : "Local PvP"}
             </span>
-            <span>{timeWinner ? `⏱️ Czas! Wygrane ${timeWinner === "w" ? "białe" : "czarne"}` : gameStatusText(state)}</span>
+            <span>
+              {timeWinner
+                ? `⏱️ Czas! Wygrane ${timeWinner === "w" ? "białe" : "czarne"}`
+                : gameStatusText(state)}
+            </span>
           </div>
 
-          <div className="clock-row">
-            <div className={`clock-box ${state.turn === "w" && !hardGameOver ? "clock-active" : ""}`}>
-              ♔ Białe: {formatClock(clock.w)}
+          {timeModeOn && (
+            <div className="clock-row">
+              <div className={`clock-box ${state.turn === "w" && !hardGameOver ? "clock-active" : ""}`}>
+                ♔ Białe: {formatClock(clock.w)}
+              </div>
+              <div className={`clock-box ${state.turn === "b" && !hardGameOver ? "clock-active" : ""}`}>
+                ♚ Czarne: {formatClock(clock.b)}
+              </div>
             </div>
-            <div className={`clock-box ${state.turn === "b" && !hardGameOver ? "clock-active" : ""}`}>
-              ♚ Czarne: {formatClock(clock.b)}
-            </div>
-          </div>
+          )}
 
           <div className="board-frame" aria-label="Chessboard container">
             <div className="board-grid" role="grid" aria-label="Chess board">
@@ -294,6 +332,8 @@ export default function Home() {
                   const isTarget = legalTargets.has(coordinate);
                   const isLastMove =
                     state.lastMove && (state.lastMove.from === coordinate || state.lastMove.to === coordinate);
+                  const isAnimFrom = animatedMove?.from === coordinate;
+                  const isAnimTo = animatedMove?.to === coordinate;
 
                   return (
                     <button
@@ -301,7 +341,9 @@ export default function Home() {
                       type="button"
                       className={`square ${squareColor(rank, fileIndex)} ${
                         isSelected ? "selected" : ""
-                      } ${isTarget ? "target" : ""} ${isLastMove ? "last-move" : ""}`}
+                      } ${isTarget ? "target" : ""} ${isLastMove ? "last-move" : ""} ${
+                        isAnimFrom ? "move-anim-from" : ""
+                      } ${isAnimTo ? "move-anim-to" : ""}`}
                       aria-label={`Square ${coordinate}`}
                       onClick={() => handleSquareClick(coordinate)}
                     >
@@ -317,13 +359,15 @@ export default function Home() {
           </div>
 
           {pendingPromotion && (
-            <div className="promotion-modal" role="dialog" aria-label="Wybór promocji pionka">
-              <span>Wybierz figurę do promocji:</span>
-              <div className="promotion-row">
-                <button type="button" onClick={() => handlePromotionSelect("q")}>Hetman</button>
-                <button type="button" onClick={() => handlePromotionSelect("r")}>Wieża</button>
-                <button type="button" onClick={() => handlePromotionSelect("b")}>Goniec</button>
-                <button type="button" onClick={() => handlePromotionSelect("n")}>Skoczek</button>
+            <div className="promotion-overlay" role="dialog" aria-label="Wybór promocji pionka">
+              <div className="promotion-modal">
+                <span>Wybierz figurę do promocji:</span>
+                <div className="promotion-row">
+                  <button type="button" onClick={() => handlePromotionSelect("q")}>Hetman</button>
+                  <button type="button" onClick={() => handlePromotionSelect("r")}>Wieża</button>
+                  <button type="button" onClick={() => handlePromotionSelect("b")}>Goniec</button>
+                  <button type="button" onClick={() => handlePromotionSelect("n")}>Skoczek</button>
+                </div>
               </div>
             </div>
           )}
@@ -331,9 +375,13 @@ export default function Home() {
           {(state.isGameOver || timeWinner) && (
             <div className="celebration" role="status" aria-live="polite">
               {timeWinner ? (
-                <>🎉 Czas minął! Wygrywają <strong>{timeWinner === "w" ? "Białe" : "Czarne"}</strong>! ⏱️🏆</>
+                <>
+                  🎉 Czas minął! Wygrywają <strong>{timeWinner === "w" ? "Białe" : "Czarne"}</strong>! ⏱️🏆
+                </>
               ) : winner ? (
-                <>🎉🎉 Brawo! <strong>{winner === "w" ? "Białe" : "Czarne"}</strong> wygrywają! 🏆</>
+                <>
+                  🎉🎉 Brawo! <strong>{winner === "w" ? "Białe" : "Czarne"}</strong> wygrywają! 🏆
+                </>
               ) : (
                 <>👏 Dobra partia! Mamy remis.</>
               )}
@@ -356,7 +404,7 @@ export default function Home() {
             <div className="button-column">
               <label className="difficulty-label">
                 AI poziom:
-                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value as "easy" | "medium" | "hard")}>
+                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value as "easy" | "medium" | "hard")}> 
                   <option value={DIFFICULTY.EASY}>Easy</option>
                   <option value={DIFFICULTY.MEDIUM}>Medium</option>
                   <option value={DIFFICULTY.HARD}>Hard</option>
@@ -368,6 +416,35 @@ export default function Home() {
                 <select value={humanColor} onChange={(e) => setHumanColor(e.target.value as "w" | "b")}>
                   <option value="w">Białe</option>
                   <option value="b">Czarne</option>
+                </select>
+              </label>
+
+              <label className="difficulty-label inline-row">
+                Gra na czas:
+                <input
+                  type="checkbox"
+                  checked={timeModeOn}
+                  onChange={(e) => {
+                    setTimeModeOn(e.target.checked);
+                    resetTimers();
+                  }}
+                />
+              </label>
+
+              <label className="difficulty-label">
+                Minuty / gracza:
+                <select
+                  value={minutesPerSide}
+                  onChange={(e) => {
+                    const mins = Number(e.target.value);
+                    setMinutesPerSide(mins);
+                    resetTimers(mins);
+                  }}
+                >
+                  <option value={3}>3</option>
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={15}>15</option>
                 </select>
               </label>
 
@@ -383,8 +460,12 @@ export default function Home() {
           <div className="panel-card status-card">
             <h2>Zbite figury</h2>
             <ul>
-              <li>Białe zbiły: <span className="captured-list">{captured.byWhite.join(" ") || "--"}</span></li>
-              <li>Czarne zbiły: <span className="captured-list">{captured.byBlack.join(" ") || "--"}</span></li>
+              <li>
+                Białe zbiły: <span className="captured-list">{captured.byWhite.join(" ") || "--"}</span>
+              </li>
+              <li>
+                Czarne zbiły: <span className="captured-list">{captured.byBlack.join(" ") || "--"}</span>
+              </li>
             </ul>
           </div>
 
